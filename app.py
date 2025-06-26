@@ -1,57 +1,63 @@
+# app.py
+
 import os
-from flask import Flask, request, jsonify
-from dotenv import load_dotenv
 import pandas as pd
+from flask import Flask, request, jsonify
 
 from data_preparation_pipeline import DataPreparationPipeline
 from prediction_utils import load_prediction_model, make_predictions
 
-# Load .env (or use Render’s env vars)
-load_dotenv()
+# ------------------------------------------------------------------------------
+# Load secrets from environment (Render will inject these)
+# ------------------------------------------------------------------------------
+BLS_API_KEY = os.getenv("BLS_API_KEY")
+FRED_API_KEY = os.getenv("FRED_API_KEY")
+BEA_API_KEY = os.getenv("BEA_API_KEY")
 
-MODEL_PATH = os.getenv("MODEL_PATH", "default_probability_model")
+# ------------------------------------------------------------------------------
+# Initialize pipeline & model once at startup
+# ------------------------------------------------------------------------------
+pipeline = DataPreparationPipeline(
+    bea_api_key=BEA_API_KEY,
+    fred_api_key=FRED_API_KEY,
+    bls_api_key=BLS_API_KEY,
+)
+model = load_prediction_model("default_probability_model")
 
-# Initialize pipeline & model once
-pipeline = DataPreparationPipeline()
-try:
-    model = load_prediction_model(model_path=MODEL_PATH)
-except Exception as e:
-    raise RuntimeError(f"Failed to load prediction model: {e}")
-
+# ------------------------------------------------------------------------------
+# Create Flask app
+# ------------------------------------------------------------------------------
 app = Flask(__name__)
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
     """
-    POST JSON for one MCA deal; returns a JSON object containing:
-    - All normalized fields from the pipeline
-    - Any extra quantitative metrics the pipeline added (e.g. grouped_status)
-    - predicted_status
+    Accepts a JSON array of flat objects representing MCA deals.
+    Returns a JSON array of enriched + predicted results.
     """
     try:
-        payload = request.get_json(force=True)
-        if not isinstance(payload, dict):
-            return jsonify({"error": "Invalid JSON payload"}), 400
+        payload = request.get_json()
+        if not isinstance(payload, list):
+            return jsonify(error="Request body must be a JSON array of objects"), 400
 
-        # 1) Data preparation
-        df = pd.DataFrame([payload])
-        prepared_df = pipeline.prepare_data_for_prediction(df)
-        if prepared_df is None or prepared_df.empty:
-            return jsonify({"error": "Data preparation failed or returned no rows"}), 400
+        # 1. Load into DataFrame
+        df = pd.DataFrame(payload)
 
-        # 2) Prediction
-        results_df, _ = make_predictions(model, prepared_df)
+        # 2. Normalize & enrich
+        prepared = pipeline.prepare_data_for_prediction(df)
 
-        # 3) Extract row as dict
-        result_row = results_df.iloc[0].to_dict()
+        # 3. Predict
+        results_df, _ = make_predictions(model, prepared)
 
-        # 4) Return all columns
-        return jsonify(result_row)
+        # 4. Serialize to JSON
+        records = results_df.to_dict(orient="records")
+        return jsonify(results=records), 200
 
     except Exception as e:
-        # You can expand this to log to a file or external logger
-        return jsonify({"error": str(e)}), 500
+        # Return human‐readable error
+        return jsonify(error=str(e)), 500
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
+    # Port can be overridden by Render via PORT env var
+    port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
