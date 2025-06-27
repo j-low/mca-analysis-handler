@@ -4,6 +4,7 @@ services:
     name: mca-analysis-service
     repo: https://github.com/j-low/mca-analysis-handler
     branch: master
+    runtime: python
     region: oregon             # or your preferred region
     plan: starter              # free/starter/standard/etc.
     buildCommand: pip install -r requirements.txt
