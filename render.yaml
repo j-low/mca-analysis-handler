@@ -4,7 +4,9 @@ services:
     name: mca-analysis-service
     repo: https://github.com/j-low/mca-analysis-handler
     branch: master
-    runtime: python
+    runtime: docker
+    dockerCommand: docker build -t mca-analysis . && docker run mca-analysis
+    autoDeploy: true
     region: oregon             # or your preferred region
     plan: starter              # free/starter/standard/etc.
     buildCommand: pip install -r requirements.txt
