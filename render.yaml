@@ -1,18 +1,12 @@
-# render.yaml
 services:
   - type: web
     name: mca-analysis-service
     repo: https://github.com/j-low/mca-analysis-handler
     branch: master
-    runtime: docker
-    dockerCommand: docker build -t mca-analysis . && docker run mca-analysis
+    runtime: docker        # Use your Dockerfile (Python 3.11 base image)
     autoDeploy: true
-    region: oregon             # or your preferred region
-    plan: starter              # free/starter/standard/etc.
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    plan: starter
     envVars:
-      # Secrets to sync from the Render Dashboard (do not hard-code)
       - key: OPENAI_API_KEY
         sync: false
       - key: BEA_API_KEY
@@ -21,6 +15,3 @@ services:
         sync: false
       - key: BLS_API_KEY
         sync: false
-      # Non-secret or defaults
-      - key: MODEL_PATH
-        value: default_probability_model
