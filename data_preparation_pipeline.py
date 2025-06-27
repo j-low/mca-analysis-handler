@@ -18,20 +18,44 @@ logger.setLevel(logging.INFO)
 class DataPreparationPipeline:
     """Data preparation pipeline for MCA prediction model"""
 
-    def __init__(self):
-        # Pull secrets from environment (Render injects these)
-        self.bea_api_key    = os.getenv("BEA_API_KEY")
-        self.fred_api_key   = os.getenv("FRED_API_KEY")
-        self.bls_api_key    = os.getenv("BLS_API_KEY")
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+    def __init__(self, bea_api_key: str, fred_api_key: str, bls_api_key: str, openai_api_key: str):
+        # assign from caller rather than re-reading os.getenv()
+        self.bea_api_key    = bea_api_key
+        self.fred_api_key   = fred_api_key
+        self.bls_api_key    = bls_api_key
+        self.openai_api_key = openai_api_key
 
-        missing = [k for k in ("BEA_API_KEY","FRED_API_KEY","BLS_API_KEY") if not os.getenv(k)]
+        # validate presence
+        missing = [name for name, val in [
+            ("BEA_API_KEY", bea_api_key),
+            ("FRED_API_KEY", fred_api_key),
+            ("BLS_API_KEY", bls_api_key),
+            ("OPENAI_API_KEY", openai_api_key),
+        ] if not val]
         if missing:
-            raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
+            raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
 
-        # State mapping…
-        self.us_state_abbrev = { … }    # unchanged
-        self.state_replacements = { … } # unchanged
+        # State abbreviation mapping
+        self.us_state_abbrev = {
+            'Alabama': 'AL', 'Alaska': 'AK', 'Arizona': 'AZ', 'Arkansas': 'AR',
+            'California': 'CA', 'Colorado': 'CO', 'Connecticut': 'CT', 'Delaware': 'DE',
+            'Florida': 'FL', 'Georgia': 'GA', 'Hawaii': 'HI', 'Idaho': 'ID',
+            'Illinois': 'IL', 'Indiana': 'IN', 'Iowa': 'IA', 'Kansas': 'KS',
+            'Kentucky': 'KY', 'Louisiana': 'LA', 'Maine': 'ME', 'Maryland': 'MD',
+            'Massachusetts': 'MA', 'Michigan': 'MI', 'Minnesota': 'MN', 'Mississippi': 'MS',
+            'Missouri': 'MO', 'Montana': 'MT', 'Nebraska': 'NE', 'Nevada': 'NV',
+            'New Hampshire': 'NH', 'New Jersey': 'NJ', 'New Mexico': 'NM', 'New York': 'NY',
+            'North Carolina': 'NC', 'North Dakota': 'ND', 'Ohio': 'OH', 'Oklahoma': 'OK',
+            'Oregon': 'OR', 'Pennsylvania': 'PA', 'Rhode Island': 'RI', 'South Carolina': 'SC',
+            'South Dakota': 'SD', 'Tennessee': 'TN', 'Texas': 'TX', 'Utah': 'UT',
+            'Vermont': 'VT', 'Virginia': 'VA', 'Washington': 'WA', 'West Virginia': 'WV',
+            'Wisconsin': 'WI', 'Wyoming': 'WY', 'District of Columbia': 'DC', 'Puerto Rico': 'PR'
+        }
+        # State replacements for cleaning
+        self.state_replacements = {
+            'ARKANSAS': 'AR', 'BOOKLYN': 'NY', 'NY ': 'NY', 'FL ': 'FL',
+            'TX ': 'TX', 'NJ ': 'NJ', 'NV ': 'NV', 'Il': 'IL', 'Ny': 'NY', 'Fl': 'FL'
+        }
 
     # … group_status, group_pay_type, clean_column_name unchanged …
 

@@ -13,6 +13,7 @@ from prediction_utils import load_prediction_model, make_predictions
 BLS_API_KEY = os.getenv("BLS_API_KEY")
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 BEA_API_KEY = os.getenv("BEA_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # ------------------------------------------------------------------------------
 # Initialize pipeline & model once at startup
@@ -21,6 +22,7 @@ pipeline = DataPreparationPipeline(
     bea_api_key=BEA_API_KEY,
     fred_api_key=FRED_API_KEY,
     bls_api_key=BLS_API_KEY,
+    openai_api_key=OPENAI_API_KEY,
 )
 model = load_prediction_model("default_probability_model")
 
