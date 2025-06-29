@@ -24,6 +24,11 @@ pipeline = DataPreparationPipeline(
     bls_api_key=BLS_API_KEY,
     openai_api_key=OPENAI_API_KEY,
 )
+cpi = pipeline.fetch_cpi_data()
+nat = pipeline.fetch_national_unemployment_data()
+state = pipeline.fetch_state_unemployment_data()
+print("DATA FETCHED")
+print(cpi.columns, nat.columns, state.columns)
 model = load_prediction_model("default_probability_model")
 
 # ------------------------------------------------------------------------------
