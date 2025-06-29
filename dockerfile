@@ -1,6 +1,11 @@
 # Use an official Python 3.11 image so pandas installs as a wheel
 FROM python:3.11-slim
 
+# install libgomp (OpenMP runtime) so LightGBM can load
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgomp1 \
+ && rm -rf /var/lib/apt/lists/*
+
 # Working directory
 WORKDIR /app
 
