@@ -102,8 +102,11 @@ class DataPreparationPipeline:
 
     def fetch_state_unemployment_data(self) -> pd.DataFrame:
         """Fetch state-level unemployment data from BLS"""
-        # build series IDs for each state
-        series_ids = [f"LAUST{code}0000000000003" for code in self.us_state_abbrev]
+        # build series IDs from the two-letter state codes
+        series_ids = [
+            f"LAUST{abbr}0000000000003"
+            for abbr in self.us_state_abbrev.values()
+        ]
         payload = {
             "seriesid": series_ids,
             "startyear": "2010",
@@ -115,31 +118,50 @@ class DataPreparationPipeline:
         data = resp.json()
 
         records = []
-        for series in data["Results"]["series"]:
+        for series in data.get("Results", {}).get("series", []):
             state_code = series["seriesID"][4:6]
-            for item in series["data"]:
-                records.append({
-                    "date": pd.to_datetime(f"{item['year']}-{item['periodName']}-01"),
-                    "state": state_code,
-                    "state_unemployment_rate": float(item["value"])
-                })
-        state_df = pd.DataFrame(records).set_index("date")
+            for item in series.get("data", []):
+                # BLS returns periods like "M01".."M12" under periodName; map to month
+                month = datetime.strptime(item["periodName"], "%B").month if item.get("periodName") else None
+                # Build date only if year and month are valid
+                if month is not None and item.get("year"):
+                    records.append({
+                        "date": pd.to_datetime(f"{item['year']}-{month:02d}-01"),
+                        "state": state_code,
+                        "state_unemployment_rate": float(item.get("value", 0))
+                    })
 
-        logger.info(f"[STATE_UNEMP] head:\n{state_df.head()}\ncolumns: {state_df.columns.tolist()}")
-        return state_df
+        df = pd.DataFrame(records)
+        if df.empty:
+            logger.warning("No state unemployment data returned; returning empty DataFrame")
+            return df
+
+        df = df.set_index("date")
+        logger.info(f"[STATE_UNEMP] head:\n{df.head()}\ncolumns: {df.columns.tolist()}")
+        return df
 
     def fetch_industry_gdp_data(self) -> pd.DataFrame:
         """Fetch industry GDP data from BEA"""
         url = (
             f"https://apps.bea.gov/api/data/"
-            f"?&UserID={self.bea_api_key}"  
+            f"?&UserID={self.bea_api_key}"
             f"&method=GetData&DataSetName=GDPbyIndustry&Year=ALL&Industry=ALL&tableID=1&Frequency=A"
         )
         resp = r.get(url)
         resp.raise_for_status()
         data = resp.json()
 
-        df = pd.DataFrame(data["BEAAPI"]["Results"]["Data"])
+        # BEA sometimes wraps the payload in a list
+        bea = data.get("BEAAPI", {})
+        if isinstance(bea, list):
+            bea = bea[0]
+        results = bea.get("Results", {})
+        records = results.get("Data", [])
+        if not records:
+            logger.warning("No industry GDP data returned; returning empty DataFrame")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(records)
         df["date"] = pd.to_datetime(df["Year"], format="%Y")
         df = df.rename(columns={"DataValue": "industry_gdp"})
         df["industry_gdp"] = df["industry_gdp"].astype(float)
@@ -170,9 +192,9 @@ class DataPreparationPipeline:
         df["funding_month"] = df["funding_date"].dt.month
 
         # fetch external series
-        cpi        = self.fetch_cpi_data()
-        nat_unemp  = self.fetch_national_unemployment_data()
-        state_unemp= self.fetch_state_unemployment_data()
+        cpi = self.fetch_cpi_data()
+        nat_unemp = self.fetch_national_unemployment_data()
+        state_unemp = self.fetch_state_unemployment_data().reset_index()  # bring date back as column
         industry_gdp = self.fetch_industry_gdp_data()
 
         # merge on date and state
@@ -188,7 +210,8 @@ class DataPreparationPipeline:
         )
         df = df.merge(
             state_unemp,
-            left_on=["funding_date", "state"], right_on=[state_unemp.index.name, "state"],
+            left_on=["funding_date", "state"],
+            right_on=["date", "state"],
             how="left"
         )
         df = df.merge(
@@ -201,3 +224,4 @@ class DataPreparationPipeline:
         logger.info(f"[MERGED DF] head:\n{df.head()}")
 
         return df
+
