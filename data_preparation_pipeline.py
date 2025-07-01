@@ -152,12 +152,15 @@ class DataPreparationPipeline:
 
         # --- parse JSON and unwrap any list wrappings ---
         data = resp.json()
+        logger.info(f"BEA API raw response: {data}")
+
         # Top-level might be a list: grab its first element
         if isinstance(data, list):
             if not data:
                 logger.warning("Empty BEA response; returning empty DataFrame")
                 return pd.DataFrame()
             data = data[0]
+
         # If it's not a dict at this point, bail
         if not isinstance(data, dict):
             logger.warning("Unexpected BEA response format; returning empty DataFrame")
@@ -170,85 +173,141 @@ class DataPreparationPipeline:
                 logger.warning("Empty BEAAPI list; returning empty DataFrame")
                 return pd.DataFrame()
             bea = bea[0]
+
         if not isinstance(bea, dict):
             logger.warning("Unexpected BEAAPI format; returning empty DataFrame")
             return pd.DataFrame()
 
         # --- dig into Results → Data ---
         results = bea.get("Results", {})
-        records = results.get("Data", [])
+        if isinstance(results, list):
+            if not results:
+                logger.warning("Empty Results list; returning empty DataFrame")
+                return pd.DataFrame()
+            results = results[0]
+
+        records = results.get("Data", []) if isinstance(results, dict) else []
         if not records:
             logger.warning("No industry GDP data returned; returning empty DataFrame")
             return pd.DataFrame()
 
         # --- build the DataFrame ---
         df = pd.DataFrame(records)
-        df["date"] = pd.to_datetime(df["Year"], format="%Y")
-        df = df.rename(columns={"DataValue": "industry_gdp"})
+        # Convert Year to integer for merging
+        df["Year"] = df["Year"].astype(int)
+        df = df.rename(columns={"DataValue": "industry_gdp", "Year": "date"})
         df["industry_gdp"] = df["industry_gdp"].astype(float)
         df = df.set_index("date")
 
         logger.info(f"[GDP] head:\n{df.head()}\ncolumns: {df.columns.tolist()}")
         return df
 
-    def prepare_data_for_prediction(self, export_df: pd.DataFrame) -> pd.DataFrame:
-        """Main entrypoint: normalize, enrich, and merge external data"""
-        logger.info("Preparing data for prediction…")
-        df = export_df.copy()
+    def _group_industry(self, industry: str) -> str:
+        """Map raw industry values to broader categories"""
+        # These mappings should match what the model was trained on
+        industry = str(industry).lower()
+        if 'restaurant' in industry or 'food' in industry:
+            return 'Food & Restaurant'
+        elif 'retail' in industry or 'shop' in industry or 'store' in industry:
+            return 'Retail'
+        elif 'service' in industry:
+            return 'Services'
+        elif 'construction' in industry or 'contractor' in industry:
+            return 'Construction'
+        elif 'medical' in industry or 'health' in industry:
+            return 'Healthcare'
+        elif 'transport' in industry or 'logistics' in industry:
+            return 'Transportation'
+        else:
+            return 'Other'
 
-        # ensure correct types
-        df["total_funding"] = df["total_funding"].astype(float)
-        df["balance"] = df["balance"].astype(float)
-        df["factor_rate"] = df["factor_rate"].astype(float)
-        df["term"] = df["term"].astype(float)
-        df["advance_number"] = df["advance_number"].astype(int)
-        df["holdback_percent"] = df["holdback_percent"].astype(float)
-        df["fico_score"] = df["fico_score"].astype(float)
-        df["business_age"] = df["business_age"].astype(float)
-        df["position"] = df["position"].astype(int)
+    def _group_pay_type(self, pay_type: str) -> str:
+        """Group payment types into broader categories"""
+        # These mappings should match what the model was trained on
+        pay_type = str(pay_type).lower()
+        if 'ach' in pay_type:
+            return 'ACH'
+        elif 'split' in pay_type:
+            return 'Split'
+        elif 'lockbox' in pay_type:
+            return 'Lockbox'
+        else:
+            return 'Other'
 
-        # parse dates
-        df["funding_date"] = pd.to_datetime(df["funding_date"])
-        df["funding_year"] = df["funding_date"].dt.year
-        df["funding_month"] = df["funding_date"].dt.month
+    def _prepare_gdp_data(self, gdp_data: dict) -> pd.DataFrame:
+        """Process GDP data into a DataFrame with proper date index"""
+        gdp_records = []
+        for record in gdp_data['Results']['Data']:
+            gdp_records.append({
+                'date': record['Year'],
+                'TableID': record['TableID'],
+                'Frequency': record['Frequency'],
+                'Quarter': record['Quarter'],
+                'Industry': record['Industry'],
+                'IndustrYDescription': record['IndustrYDescription'],
+                'industry_gdp': float(record['DataValue']),
+                'NoteRef': record['NoteRef']
+            })
+        
+        df = pd.DataFrame(gdp_records)
+        df['date'] = pd.to_datetime(df['date'], format='%Y')
+        df.set_index('date', inplace=True)
+        return df
 
-        # fetch external series
-        cpi = self.fetch_cpi_data()
-        nat_unemp = self.fetch_national_unemployment_data()
-        state_unemp = self.fetch_state_unemployment_data().reset_index()  # bring date back as column
-        industry_gdp = self.fetch_industry_gdp_data()
-
-        # merge on date and state
+    def prepare_data_for_prediction(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Prepare data for making predictions by adding required features"""
+        # Convert funding_date to datetime
+        df['funding_date'] = pd.to_datetime(df['funding_date'])
+        df['funding_year'] = df['funding_date'].dt.year
+        
+        # Add industry category and grouped pay type
+        df['industry_category'] = df['industry'].apply(self._group_industry)
+        df['grouped_pay_type'] = df['pay_type'].apply(self._group_pay_type)
+        
+        # Add CPI data
         df = df.merge(
-            cpi[["yoy_percentage_change"]],
+            self.fetch_cpi_data()[["cpi", "yoy_percentage_change"]],
             left_on="funding_date", right_index=True,
             how="left"
         )
+        
+        # Add national unemployment data
         df = df.merge(
-            nat_unemp,
+            self.fetch_national_unemployment_data(),
             left_on="funding_date", right_index=True,
             how="left"
         )
-        # Only merge state unemployment if we have data
+        
+        # Add state unemployment data if available
+        state_unemp = self.fetch_state_unemployment_data()
         if not state_unemp.empty:
             df = df.merge(
                 state_unemp,
-                left_on=["funding_date", "state"],
-                right_on=["date", "state"],
+                left_on=["funding_date", "state"], right_index=True,
                 how="left"
             )
         else:
-            # Add empty column to maintain schema
-            df["state_unemployment_rate"] = None
+            df['state_unemployment_rate'] = None
             logger.warning("No state unemployment data available - using null values")
+
+        # Add GDP data - merge on funding_year
+        logger.info(f"DataFrame before GDP merge - funding_year type: {df['funding_year'].dtype}")
+        gdp_data = self.fetch_industry_gdp_data().copy()
+        gdp_data.index = pd.to_datetime(gdp_data.index)
+        logger.info(f"GDP index type: {gdp_data.index.dtype}")
+        
+        # Convert funding_year to datetime for merging
+        df['merge_year'] = pd.to_datetime(df['funding_year'].astype(str), format='%Y')
         df = df.merge(
-            industry_gdp[["industry_gdp"]],
-            left_on="funding_year", right_index=True,
-            how="left"
+            gdp_data[['industry_gdp']],
+            left_on='merge_year',
+            right_index=True,
+            how='left'
         )
+        df.drop('merge_year', axis=1, inplace=True)
 
         logger.info(f"[MERGED DF] columns: {df.columns.tolist()}")
         logger.info(f"[MERGED DF] head:\n{df.head()}")
-
+        
         return df
 
