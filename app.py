@@ -90,10 +90,10 @@ def analyze():
         results_df, pred_counts = make_predictions(model, prepared)
         logger.info(f"Prediction counts: {pred_counts}")
 
-        # 4. Serialize to JSON
+        # 4. Serialize to JSON - return the list directly without wrapping
         records = results_df.to_dict(orient="records")
         logger.info(f"Returning {len(records)} results")
-        return jsonify(results=records), 200
+        return jsonify(records), 200
 
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}", exc_info=True)
